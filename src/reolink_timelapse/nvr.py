@@ -8,9 +8,9 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Reolink tokens expire after ~1 hour; refresh 5 min before expiry
-_TOKEN_TTL = 3600
-_TOKEN_REFRESH_MARGIN = 300
+_TOKEN_REFRESH_MARGIN = 300  # re-login this many seconds before expiry
+_LOGIN_RETRIES = 5
+_LOGIN_RETRY_DELAY = 30  # seconds between login retries (-5 = session limit hit)
 
 
 class ReolinkNVR:
@@ -20,42 +20,89 @@ class ReolinkNVR:
         self.password = password
         self._token: str | None = None
         self._token_time: float = 0.0
+        self._token_ttl: int = 3600       # updated from actual leaseTime on each login
         self._login_lock = asyncio.Lock()
         self._client = httpx.AsyncClient(timeout=30.0)
         self._base_url = f"http://{host}/api.cgi"
 
+    async def _logout(self) -> None:
+        """Best-effort logout of the current session to free a slot on the NVR."""
+        if not self._token:
+            return
+        try:
+            resp = await self._client.post(
+                self._base_url,
+                params={"cmd": "Logout", "token": self._token},
+                json=[{"cmd": "Logout", "action": 0, "param": {}}],
+            )
+            code = resp.json()[0].get("code", -1)
+            if code == 0:
+                logger.info("Logged out of NVR session")
+            else:
+                logger.warning(f"NVR logout returned code {code} (session may linger)")
+        except Exception as exc:
+            logger.warning(f"NVR logout error (ignored): {exc}")
+        finally:
+            self._token = None
+            self._token_time = 0.0
+
     async def _login(self) -> None:
-        logger.info(f"Logging in to NVR at {self.host} ...")
-        resp = await self._client.post(
-            self._base_url,
-            params={"cmd": "Login"},
-            json=[
-                {
-                    "cmd": "Login",
-                    "action": 0,
-                    "param": {
-                        "User": {
-                            "Version": "0",
-                            "userName": self.username,
-                            "password": self.password,
-                        }
-                    },
-                }
-            ],
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if data[0].get("code", -1) != 0:
-            raise RuntimeError(f"NVR login failed: {data[0]}")
-        self._token = data[0]["value"]["Token"]["name"]
-        self._token_time = time.monotonic()
-        logger.info("NVR login successful")
+        # Always clean up the existing session first so we don't accumulate
+        # stale slots on the NVR (which caps concurrent HTTP sessions).
+        await self._logout()
+
+        for attempt in range(1, _LOGIN_RETRIES + 1):
+            if attempt > 1:
+                logger.info(
+                    f"Login retry {attempt}/{_LOGIN_RETRIES} "
+                    f"in {_LOGIN_RETRY_DELAY}s (NVR session limit may still be clearing) ..."
+                )
+                await asyncio.sleep(_LOGIN_RETRY_DELAY)
+
+            logger.info(f"Logging in to NVR at {self.host} ...")
+            resp = await self._client.post(
+                self._base_url,
+                params={"cmd": "Login"},
+                json=[
+                    {
+                        "cmd": "Login",
+                        "action": 0,
+                        "param": {
+                            "User": {
+                                "Version": "0",
+                                "userName": self.username,
+                                "password": self.password,
+                            }
+                        },
+                    }
+                ],
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            if data[0].get("code", -1) == 0:
+                token_data = data[0]["value"]["Token"]
+                self._token = token_data["name"]
+                self._token_ttl = token_data.get("leaseTime", 3600)
+                self._token_time = time.monotonic()
+                logger.info(
+                    f"NVR login successful (token valid for {self._token_ttl}s)"
+                )
+                return
+
+            rsp_code = data[0].get("error", {}).get("rspCode")
+            logger.warning(f"Login failed (attempt {attempt}/{_LOGIN_RETRIES}, rspCode={rsp_code})")
+            if rsp_code != -5:
+                # -5 = session limit; worth retrying.  Any other error: fail fast.
+                break
+
+        raise RuntimeError(f"NVR login failed after {_LOGIN_RETRIES} attempts: {data[0]}")
 
     async def _ensure_token(self) -> str:
         # Fast path: token is still valid — no lock needed
         if self._token is not None:
             age = time.monotonic() - self._token_time
-            if age <= (_TOKEN_TTL - _TOKEN_REFRESH_MARGIN):
+            if age <= (self._token_ttl - _TOKEN_REFRESH_MARGIN):
                 return self._token
 
         # Slow path: serialize so only one coroutine actually logs in.
@@ -64,7 +111,7 @@ class ReolinkNVR:
             # Re-check after acquiring the lock — another coroutine may have
             # already refreshed the token while we were waiting.
             age = time.monotonic() - self._token_time
-            if self._token is None or age > (_TOKEN_TTL - _TOKEN_REFRESH_MARGIN):
+            if self._token is None or age > (self._token_ttl - _TOKEN_REFRESH_MARGIN):
                 await self._login()
             return self._token  # type: ignore[return-value]
 
@@ -161,6 +208,7 @@ class ReolinkNVR:
         return resp.content
 
     async def aclose(self) -> None:
+        await self._logout()
         await self._client.aclose()
 
     async def __aenter__(self) -> "ReolinkNVR":
