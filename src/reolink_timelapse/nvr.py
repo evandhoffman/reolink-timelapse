@@ -56,6 +56,10 @@ class ReolinkNVR:
         return self._token  # type: ignore[return-value]
 
     async def get_online_channels(self) -> list[dict]:
+        """
+        Return online channels enriched with 'name', 'resolution', and 'fps'
+        fetched from GetOsd / GetEnc per channel.
+        """
         token = await self._ensure_token()
         resp = await self._client.post(
             self._base_url,
@@ -68,8 +72,52 @@ class ReolinkNVR:
             raise RuntimeError(f"GetChannelstatus failed: {data[0]}")
         all_channels = data[0]["value"]["status"]
         online = [ch for ch in all_channels if ch.get("online") == 1]
+
+        # Enrich each channel with name + encoding info in parallel
+        import asyncio
+        details = await asyncio.gather(
+            *[self._get_channel_detail(ch["channel"]) for ch in online],
+            return_exceptions=True,
+        )
+        for ch, detail in zip(online, details):
+            if isinstance(detail, dict):
+                ch.update(detail)
+            else:
+                logger.warning(f"Channel {ch['channel']}: could not fetch detail: {detail}")
+                ch.setdefault("name", f"ch{ch['channel']}")
+
         logger.info(f"Online channels: {[ch['channel'] for ch in online]}")
         return online
+
+    async def _get_channel_detail(self, channel: int) -> dict:
+        """Fetch OSD name + main-stream encoding info for one channel."""
+        token = await self._ensure_token()
+        resp = await self._client.post(
+            self._base_url,
+            params={"cmd": "GetOsd", "token": token},
+            json=[{"cmd": "GetOsd", "action": 0, "param": {"channel": channel}}],
+        )
+        resp.raise_for_status()
+        osd_data = resp.json()
+        name = (
+            osd_data[0].get("value", {})
+            .get("Osd", {})
+            .get("osdChannel", {})
+            .get("name", f"ch{channel}")
+        )
+
+        resp = await self._client.post(
+            self._base_url,
+            params={"cmd": "GetEnc", "token": token},
+            json=[{"cmd": "GetEnc", "action": 0, "param": {"channel": channel}}],
+        )
+        resp.raise_for_status()
+        enc_data = resp.json()
+        main = enc_data[0].get("value", {}).get("Enc", {}).get("mainStream", {})
+        resolution = main.get("size", "?")
+        fps = main.get("frameRate", "?")
+
+        return {"name": name, "resolution": resolution, "fps": fps}
 
     async def capture_snapshot(self, channel: int) -> bytes:
         token = await self._ensure_token()

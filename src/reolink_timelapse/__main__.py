@@ -61,6 +61,30 @@ async def cmd_capture(settings: Settings) -> None:
     logger.info("Capture complete. Run 'stitch' to encode videos.")
 
 
+async def cmd_test(settings: Settings) -> None:
+    print(f"Connecting to NVR at {settings.nvr_host} ...")
+    try:
+        async with ReolinkNVR(
+            settings.nvr_host, settings.nvr_username, settings.nvr_password
+        ) as nvr:
+            channels = await nvr.get_online_channels()
+            print(f"\n✓ Login successful\n")
+            if not channels:
+                print("  No online cameras found.")
+            else:
+                print(f"  {'Ch':>3}  {'Name':<20}  {'Resolution':<12}  {'FPS'}")
+                print(f"  {'--':>3}  {'----':<20}  {'----------':<12}  {'---'}")
+                for ch in channels:
+                    print(
+                        f"  {ch['channel']:>3}  {ch.get('name', '?'):<20}"
+                        f"  {ch.get('resolution', '?'):<12}  {ch.get('fps', '?')}"
+                    )
+                print(f"\n  {len(channels)} camera(s) online")
+    except Exception as exc:
+        print(f"\n✗ Connection failed: {exc}")
+        sys.exit(1)
+
+
 async def cmd_stitch(settings: Settings, sample_rate: int, output_fps: int) -> None:
     logger.info(
         f"=== Stitch starting ===\n"
@@ -81,10 +105,15 @@ Modes:
   capture   Pull snapshots from all online cameras and save to disk.
             Runs for DURATION_HOURS then exits (or until SIGTERM).
 
+  test      Verify NVR connectivity and list online cameras.
+
   stitch    Read saved frames and encode an MP4 per camera.
             Can be run while capture is still running.
 
 Examples:
+  # Verify credentials and see what cameras are available
+  docker compose run --rm timelapse test
+
   # Capture for 18 hours at one frame every 15 seconds
   docker compose run timelapse capture
 
@@ -94,6 +123,7 @@ Examples:
     )
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
+    subparsers.add_parser("test", help="Test NVR connectivity and list cameras")
     subparsers.add_parser("capture", help="Capture snapshots from NVR")
 
     sp_stitch = subparsers.add_parser("stitch", help="Encode captured frames into MP4")
@@ -115,7 +145,9 @@ Examples:
     args = parser.parse_args()
     settings = Settings()
 
-    if args.mode == "capture":
+    if args.mode == "test":
+        asyncio.run(cmd_test(settings))
+    elif args.mode == "capture":
         asyncio.run(cmd_capture(settings))
     elif args.mode == "stitch":
         sample_rate = args.sample_rate if args.sample_rate is not None else settings.sample_rate
