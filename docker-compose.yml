@@ -1,0 +1,10 @@
+services:
+  timelapse:
+    build: .
+    env_file: .env
+    volumes:
+      # Frames and videos persist on the host under ./data/
+      - ./data:/data
+    restart: unless-stopped
+    # Default: capture.  Override for stitch:
+    #   docker compose run timelapse stitch --sample-rate 4 --fps 24

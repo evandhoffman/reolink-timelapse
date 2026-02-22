@@ -1,0 +1,13 @@
+# Secrets — never commit
+.env
+
+# Captured frames and rendered videos
+data/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.ruff_cache/
