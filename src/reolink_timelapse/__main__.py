@@ -47,8 +47,12 @@ async def cmd_capture(settings: Settings) -> None:
             logger.error("No online cameras found — check NVR connection and credentials.")
             sys.exit(1)
 
-        if settings.capture_channels:
-            wanted = set(settings.capture_channels)
+        wanted = {
+            int(x.strip())
+            for x in settings.capture_channels.split(",")
+            if x.strip().isdigit()
+        }
+        if wanted:
             channels = [ch for ch in channels if ch["channel"] in wanted]
             if not channels:
                 logger.error(f"None of the requested channels {sorted(wanted)} are online.")

@@ -16,7 +16,9 @@ class Settings(BaseSettings):
     # Capture settings
     capture_interval_seconds: float = 15.0  # seconds between snapshots
     duration_hours: float = 18.0            # how long to capture before auto-stop
-    capture_channels: list[int] = []        # channels to capture; empty = all online channels
+    # Comma-separated channel numbers to capture, e.g. "0,2,3".  Empty = all online channels.
+    # Must be a plain string — pydantic-settings would try to JSON-decode a list[int] field.
+    capture_channels: str = ""
 
     # Stitch settings
     stitch_every_n_frames: int = 1          # use every Nth captured frame (1 = all)
