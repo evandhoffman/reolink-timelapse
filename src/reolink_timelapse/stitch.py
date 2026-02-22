@@ -7,16 +7,16 @@ Reads saved JPEG frames from <data_dir>/frames/ and encodes MP4 files into
 Downsampling example
 --------------------
 If you captured at 1 frame / 15 s and want 1 frame / minute in the output:
-    sample_rate = 4   (keep every 4th frame)
+    every_n_frames = 4   (keep every 4th frame)
 
 Output duration math
 --------------------
-  selected_frames = total_frames / sample_rate
+  selected_frames = total_frames / every_n_frames
   video_seconds   = selected_frames / output_fps
 
   e.g. 18 h × (60/15) frames/min = 4 320 captured frames per camera
-       sample_rate=4  →  1 080 selected frames
-       output_fps=24  →  1 080 / 24 = 45 s of video
+       every_n_frames=4  →  1 080 selected frames
+       output_fps=24     →  1 080 / 24 = 45 s of video
 """
 
 import asyncio
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 async def _encode_channel(
     frame_dir: Path,
     output_path: Path,
-    sample_rate: int,
+    every_n_frames: int,
     output_fps: int,
 ) -> None:
     frames = sorted(frame_dir.glob("*.jpg"))
@@ -39,11 +39,11 @@ async def _encode_channel(
         logger.warning(f"No frames in {frame_dir} — skipping")
         return
 
-    selected = frames[::sample_rate]
+    selected = frames[::every_n_frames]
     video_s = len(selected) / output_fps
     logger.info(
         f"{frame_dir.name}: {len(frames)} frames, "
-        f"sample_rate={sample_rate} → {len(selected)} selected, "
+        f"every_n_frames={every_n_frames} → {len(selected)} selected, "
         f"output ≈ {video_s:.1f}s at {output_fps} fps"
     )
 
@@ -95,7 +95,7 @@ async def _encode_channel(
         Path(concat_file).unlink(missing_ok=True)
 
 
-async def run_stitch(data_dir: str, sample_rate: int, output_fps: int) -> None:
+async def run_stitch(data_dir: str, every_n_frames: int, output_fps: int) -> None:
     frames_base = Path(data_dir) / "frames"
     video_dir = Path(data_dir) / "videos"
     video_dir.mkdir(parents=True, exist_ok=True)
@@ -112,6 +112,6 @@ async def run_stitch(data_dir: str, sample_rate: int, output_fps: int) -> None:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     for ch_dir in channel_dirs:
         output = video_dir / f"timelapse_{ch_dir.name}_{timestamp}.mp4"
-        await _encode_channel(ch_dir, output, sample_rate, output_fps)
+        await _encode_channel(ch_dir, output, every_n_frames, output_fps)
 
     logger.info(f"All videos written to {video_dir}")

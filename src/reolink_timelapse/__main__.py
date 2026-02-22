@@ -25,14 +25,14 @@ async def cmd_capture(settings: Settings) -> None:
         loop.add_signal_handler(sig, stop_event.set)
 
     end_time = datetime.now() + timedelta(hours=settings.duration_hours)
-    total_frames_est = int(settings.duration_hours * 3600 / settings.capture_interval)
+    total_frames_est = int(settings.duration_hours * 3600 / settings.capture_interval_seconds)
     storage_lo = total_frames_est * 0.3   # MB (compressed 1080p)
     storage_hi = total_frames_est * 4.0   # MB (4K)
 
     logger.info(
         f"=== Capture starting ===\n"
         f"  NVR          : {settings.nvr_host}\n"
-        f"  Interval     : {settings.capture_interval}s\n"
+        f"  Interval     : {settings.capture_interval_seconds}s\n"
         f"  Duration     : {settings.duration_hours}h  (until {end_time:%Y-%m-%d %H:%M:%S})\n"
         f"  Data dir     : {settings.data_dir}\n"
         f"  Est. frames  : ~{total_frames_est:,} per camera\n"
@@ -47,7 +47,17 @@ async def cmd_capture(settings: Settings) -> None:
             logger.error("No online cameras found — check NVR connection and credentials.")
             sys.exit(1)
 
-        logger.info(f"Found {len(channels)} camera(s)")
+        if settings.capture_channels:
+            wanted = set(settings.capture_channels)
+            channels = [ch for ch in channels if ch["channel"] in wanted]
+            if not channels:
+                logger.error(f"None of the requested channels {sorted(wanted)} are online.")
+                sys.exit(1)
+            logger.info(
+                f"Filtering to channels {sorted(wanted)} → capturing {len(channels)} camera(s)"
+            )
+        else:
+            logger.info(f"Capturing all {len(channels)} online camera(s)")
 
         async def _auto_stop() -> None:
             await asyncio.sleep(settings.duration_hours * 3600)
@@ -55,7 +65,9 @@ async def cmd_capture(settings: Settings) -> None:
             stop_event.set()
 
         stop_task = asyncio.create_task(_auto_stop())
-        await run_capture(nvr, channels, settings.data_dir, settings.capture_interval, stop_event)
+        await run_capture(
+            nvr, channels, settings.data_dir, settings.capture_interval_seconds, stop_event
+        )
         stop_task.cancel()
 
     logger.info("Capture complete. Run 'stitch' to encode videos.")
@@ -85,14 +97,14 @@ async def cmd_test(settings: Settings) -> None:
         sys.exit(1)
 
 
-async def cmd_stitch(settings: Settings, sample_rate: int, output_fps: int) -> None:
+async def cmd_stitch(settings: Settings, every_n_frames: int, output_fps: int) -> None:
     logger.info(
         f"=== Stitch starting ===\n"
-        f"  Data dir     : {settings.data_dir}\n"
-        f"  Sample rate  : every {sample_rate} frame(s)\n"
-        f"  Output FPS   : {output_fps}"
+        f"  Data dir       : {settings.data_dir}\n"
+        f"  Every N frames : {every_n_frames}\n"
+        f"  Output FPS     : {output_fps}"
     )
-    await run_stitch(settings.data_dir, sample_rate, output_fps)
+    await run_stitch(settings.data_dir, every_n_frames, output_fps)
     logger.info("Stitch complete.")
 
 
@@ -118,7 +130,7 @@ Examples:
   docker compose run timelapse capture
 
   # Encode: use every 4th frame at 24 fps
-  docker compose run timelapse stitch --sample-rate 4 --fps 24
+  docker compose run timelapse stitch --every-n-frames 4 --fps 24
 """,
     )
     subparsers = parser.add_subparsers(dest="mode", required=True)
@@ -128,11 +140,11 @@ Examples:
 
     sp_stitch = subparsers.add_parser("stitch", help="Encode captured frames into MP4")
     sp_stitch.add_argument(
-        "--sample-rate",
+        "--every-n-frames",
         type=int,
         default=None,
         metavar="N",
-        help="Use every Nth captured frame (default: SAMPLE_RATE env var, then 1)",
+        help="Use every Nth captured frame (default: STITCH_EVERY_N_FRAMES env var, then 1)",
     )
     sp_stitch.add_argument(
         "--fps",
@@ -150,9 +162,13 @@ Examples:
     elif args.mode == "capture":
         asyncio.run(cmd_capture(settings))
     elif args.mode == "stitch":
-        sample_rate = args.sample_rate if args.sample_rate is not None else settings.sample_rate
+        every_n_frames = (
+            args.every_n_frames
+            if args.every_n_frames is not None
+            else settings.stitch_every_n_frames
+        )
         output_fps = args.fps if args.fps is not None else settings.output_fps
-        asyncio.run(cmd_stitch(settings, sample_rate, output_fps))
+        asyncio.run(cmd_stitch(settings, every_n_frames, output_fps))
 
 
 if __name__ == "__main__":

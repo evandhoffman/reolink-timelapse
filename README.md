@@ -64,7 +64,7 @@ docker compose logs -f
 docker compose run --rm timelapse stitch
 
 # Use every 4th frame (effective 1 frame/min if captured at 1/15s), 24 fps
-docker compose run --rm timelapse stitch --sample-rate 4 --fps 24
+docker compose run --rm timelapse stitch --every-n-frames 4 --fps 24
 ```
 
 Videos appear in `./data/videos/`.
@@ -75,23 +75,24 @@ Videos appear in `./data/videos/`.
 
 All settings can be provided via `.env` or environment variables.
 
-| Variable           | Default | Description                                                     |
-|--------------------|---------|------------------------------------------------------------------|
-| `NVR_HOST`         | —       | NVR IP or hostname (required)                                   |
-| `NVR_USERNAME`     | —       | NVR login username (required)                                   |
-| `NVR_PASSWORD`     | —       | NVR login password (required)                                   |
-| `CAPTURE_INTERVAL` | `15`    | Seconds between snapshots                                       |
-| `DURATION_HOURS`   | `18`    | Auto-stop capture after this many hours                         |
-| `SAMPLE_RATE`      | `1`     | Stitch: use every Nth frame (1 = all)                           |
-| `OUTPUT_FPS`       | `24`    | Stitch: output video frame rate                                 |
-| `DATA_DIR`         | `/data` | Container path for frames + videos (mount a host dir here)      |
+| Variable                  | Default | Description                                                |
+|---------------------------|---------|------------------------------------------------------------|
+| `NVR_HOST`                | —       | NVR IP or hostname (required)                              |
+| `NVR_USERNAME`            | —       | NVR login username (required)                              |
+| `NVR_PASSWORD`            | —       | NVR login password (required)                              |
+| `CAPTURE_INTERVAL_SECONDS`| `15`    | Seconds between snapshots                                  |
+| `DURATION_HOURS`          | `18`    | Auto-stop capture after this many hours                    |
+| `CAPTURE_CHANNELS`        | (all)   | Comma-separated channel numbers to capture, e.g. `0,2,3`  |
+| `STITCH_EVERY_N_FRAMES`   | `1`     | Stitch: use every Nth captured frame (1 = all)             |
+| `OUTPUT_FPS`              | `24`    | Stitch: output video frame rate                            |
+| `DATA_DIR`                | `/data` | Container path for frames + videos (mount a host dir here) |
 
 ### Framerate / compression math
 
 ```
-video_seconds = (total_captured_frames / SAMPLE_RATE) / OUTPUT_FPS
+video_seconds = (total_captured_frames / STITCH_EVERY_N_FRAMES) / OUTPUT_FPS
 
-Example — 18 h capture, CAPTURE_INTERVAL=15, SAMPLE_RATE=4, OUTPUT_FPS=24:
+Example — 18 h capture, CAPTURE_INTERVAL_SECONDS=15, STITCH_EVERY_N_FRAMES=4, OUTPUT_FPS=24:
   captured   = 18 × 3600 / 15     = 4 320 frames per camera
   selected   = 4 320 / 4          = 1 080 frames
   video      = 1 080 / 24         ≈ 45 seconds per camera
@@ -100,7 +101,7 @@ Example — 18 h capture, CAPTURE_INTERVAL=15, SAMPLE_RATE=4, OUTPUT_FPS=24:
 To target a specific output length, rearrange:
 
 ```
-SAMPLE_RATE = (total_captured_frames) / (target_seconds × OUTPUT_FPS)
+STITCH_EVERY_N_FRAMES = total_captured_frames / (target_seconds × OUTPUT_FPS)
 ```
 
 ### Storage estimate
