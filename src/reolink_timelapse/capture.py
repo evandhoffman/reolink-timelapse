@@ -73,6 +73,7 @@ async def run_capture(
         if total and total % (len(channels) * 10) == 0:
             logger.info(f"Frames captured so far: {counts}")
 
+        logger.info(f"Sleeping {interval:.0f}s ...")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=interval)
         except asyncio.TimeoutError:
