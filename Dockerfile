@@ -29,6 +29,11 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src   /app/src
 
+# Create /data as root and hand ownership to nonroot before switching users.
+# Without this, Docker creates the volume mount point as root:root and the
+# nonroot process can't write frames or videos into it.
+RUN mkdir -p /data && chown nonroot:nonroot /data
+
 # Frames + videos are written here; mount a host directory to persist them
 VOLUME ["/data"]
 
