@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import random
 import string
@@ -19,6 +20,7 @@ class ReolinkNVR:
         self.password = password
         self._token: str | None = None
         self._token_time: float = 0.0
+        self._login_lock = asyncio.Lock()
         self._client = httpx.AsyncClient(timeout=30.0)
         self._base_url = f"http://{host}/api.cgi"
 
@@ -50,10 +52,21 @@ class ReolinkNVR:
         logger.info("NVR login successful")
 
     async def _ensure_token(self) -> str:
-        age = time.monotonic() - self._token_time
-        if self._token is None or age > (_TOKEN_TTL - _TOKEN_REFRESH_MARGIN):
-            await self._login()
-        return self._token  # type: ignore[return-value]
+        # Fast path: token is still valid — no lock needed
+        if self._token is not None:
+            age = time.monotonic() - self._token_time
+            if age <= (_TOKEN_TTL - _TOKEN_REFRESH_MARGIN):
+                return self._token
+
+        # Slow path: serialize so only one coroutine actually logs in.
+        # All others wait, then return the token the first one fetched.
+        async with self._login_lock:
+            # Re-check after acquiring the lock — another coroutine may have
+            # already refreshed the token while we were waiting.
+            age = time.monotonic() - self._token_time
+            if self._token is None or age > (_TOKEN_TTL - _TOKEN_REFRESH_MARGIN):
+                await self._login()
+            return self._token  # type: ignore[return-value]
 
     async def get_online_channels(self) -> list[dict]:
         """
@@ -74,7 +87,6 @@ class ReolinkNVR:
         online = [ch for ch in all_channels if ch.get("online") == 1]
 
         # Enrich each channel with name + encoding info in parallel
-        import asyncio
         details = await asyncio.gather(
             *[self._get_channel_detail(ch["channel"]) for ch in online],
             return_exceptions=True,
@@ -129,8 +141,9 @@ class ReolinkNVR:
         resp.raise_for_status()
         content_type = resp.headers.get("content-type", "")
         if "image" not in content_type:
-            # Could be an auth error or unsupported channel — force re-login next time
-            self._token = None
+            # Mark token stale so the next _ensure_token call re-logs in.
+            # The lock in _ensure_token ensures only one coroutine does so.
+            self._token_time = 0.0
             raise RuntimeError(
                 f"Unexpected content-type '{content_type}': {resp.text[:200]}"
             )
