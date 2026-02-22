@@ -141,12 +141,23 @@ class ReolinkNVR:
         resp.raise_for_status()
         content_type = resp.headers.get("content-type", "")
         if "image" not in content_type:
-            # Mark token stale so the next _ensure_token call re-logs in.
-            # The lock in _ensure_token ensures only one coroutine does so.
-            self._token_time = 0.0
-            raise RuntimeError(
-                f"Unexpected content-type '{content_type}': {resp.text[:200]}"
-            )
+            # Parse the error body to distinguish auth failures from transient
+            # NVR errors like "get config failed" (rspCode -12).
+            rsp_code: int | None = None
+            detail: str = resp.text[:300]
+            try:
+                body = resp.json()
+                rsp_code = body[0]["error"]["rspCode"]
+                detail = body[0]["error"]["detail"]
+            except Exception:
+                pass
+
+            # Only invalidate the token for actual auth errors (-6 = bad/expired token).
+            # Transient NVR errors (-12, etc.) leave the token intact.
+            if rsp_code == -6:
+                self._token_time = 0.0
+
+            raise RuntimeError(f"Snap rspCode={rsp_code}: {detail}")
         return resp.content
 
     async def aclose(self) -> None:

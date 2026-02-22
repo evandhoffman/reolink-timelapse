@@ -55,11 +55,15 @@ async def run_capture(
     counts: dict[int, int] = {ch["channel"]: 0 for ch in channels}
 
     while not stop_event.is_set():
-        tasks = [
-            _capture_one(nvr, ch["channel"], frame_dirs[ch["channel"]])
-            for ch in channels
-        ]
-        results = await asyncio.gather(*tasks)
+        # Capture channels sequentially with a small pause between each.
+        # Firing all snapshots simultaneously overloads the NVR and causes
+        # "get config failed" (-12) errors on some channels.
+        results = []
+        for ch in channels:
+            ok = await _capture_one(nvr, ch["channel"], frame_dirs[ch["channel"]])
+            results.append(ok)
+            if not stop_event.is_set():
+                await asyncio.sleep(0.5)
 
         for ch, ok in zip(channels, results):
             if ok:
