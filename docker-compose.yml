@@ -6,5 +6,9 @@ services:
       # Frames and videos persist on the host under ./data/
       - ./data:/data
     restart: unless-stopped
+    # Give the container 30 s to logout from the NVR before Docker sends SIGKILL.
+    # Without this, a `docker compose down` kills the process before the logout
+    # HTTP request completes, leaving a stale session on the NVR.
+    stop_grace_period: 30s
     # Default: capture.  Override for stitch:
-    #   docker compose run timelapse stitch --sample-rate 4 --fps 24
+    #   docker compose run timelapse stitch --every-n-frames 4 --fps 24
