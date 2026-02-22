@@ -26,8 +26,6 @@ async def cmd_capture(settings: Settings) -> None:
 
     end_time = datetime.now() + timedelta(hours=settings.duration_hours)
     total_frames_est = int(settings.duration_hours * 3600 / settings.capture_interval_seconds)
-    storage_lo = total_frames_est * 0.3   # MB (compressed 1080p)
-    storage_hi = total_frames_est * 4.0   # MB (4K)
 
     logger.info(
         f"=== Capture starting ===\n"
@@ -36,7 +34,7 @@ async def cmd_capture(settings: Settings) -> None:
         f"  Duration     : {settings.duration_hours}h  (until {end_time:%Y-%m-%d %H:%M:%S})\n"
         f"  Data dir     : {settings.data_dir}\n"
         f"  Est. frames  : ~{total_frames_est:,} per camera\n"
-        f"  Est. storage : ~{storage_lo/1024:.1f}–{storage_hi/1024:.1f} GB per camera"
+        f"  Storage estimate will update each interval once real frame sizes are known."
     )
 
     async with ReolinkNVR(
@@ -70,7 +68,8 @@ async def cmd_capture(settings: Settings) -> None:
 
         stop_task = asyncio.create_task(_auto_stop())
         await run_capture(
-            nvr, channels, settings.data_dir, settings.capture_interval_seconds, stop_event
+            nvr, channels, settings.data_dir, settings.capture_interval_seconds,
+            stop_event, end_time,
         )
         stop_task.cancel()
 
