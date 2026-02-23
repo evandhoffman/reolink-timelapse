@@ -4,6 +4,10 @@ Timelapse stitch step.
 Reads saved JPEG frames from <data_dir>/frames/ and encodes MP4 files into
 <data_dir>/videos/.
 
+Two files are produced per channel:
+  timelapse_<channel>_<timestamp>.mp4        — original resolution
+  timelapse_<channel>_<timestamp>_720p.mp4  — scaled to 720p (for sharing)
+
 Downsampling example
 --------------------
 If you captured at 1 frame / 15 s and want 1 frame / minute in the output:
@@ -27,10 +31,15 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Scale filter for the 720p output: height = 720, width auto-calculated and
+# rounded to the nearest even number (required by libx264).
+_SCALE_720P = "scale=-2:720"
+
 
 async def _encode_channel(
     frame_dir: Path,
-    output_path: Path,
+    output_full: Path,
+    output_720p: Path,
     every_n_frames: int,
     output_fps: int,
 ) -> None:
@@ -56,29 +65,30 @@ async def _encode_channel(
     for f in selected:
         lines.append(f"file '{f.absolute()}'")
         lines.append(f"duration {frame_dur:.6f}")
-    # Repeat last frame (no duration) so ffmpeg flushes it properly
     lines.append(f"file '{selected[-1].absolute()}'")
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".txt", delete=False
-    ) as tmp:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp:
         tmp.write("\n".join(lines))
         concat_file = tmp.name
 
+    # Single ffmpeg call, two outputs — input is decoded only once.
+    #   Output 1: full resolution
+    #   Output 2: scaled to 720p
     try:
         cmd = [
             "ffmpeg", "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", concat_file,
-            "-c:v", "libx264",
-            "-preset", "slow",
-            "-crf", "18",
-            "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart",
-            str(output_path),
+            "-f", "concat", "-safe", "0", "-i", concat_file,
+            # ── full resolution ──
+            "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+            str(output_full),
+            # ── 720p ──
+            "-vf", _SCALE_720P,
+            "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+            str(output_720p),
         ]
-        logger.info(f"Running: {' '.join(cmd)}")
+        logger.info(f"Encoding {output_full.name} + {output_720p.name} ...")
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -87,10 +97,14 @@ async def _encode_channel(
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
             logger.error(f"ffmpeg error:\n{stderr.decode()}")
-            raise RuntimeError(f"ffmpeg failed for {output_path}")
+            raise RuntimeError(f"ffmpeg failed for {frame_dir.name}")
 
-        size_mb = output_path.stat().st_size / 1_000_000
-        logger.info(f"Encoded → {output_path} ({size_mb:.1f} MB)")
+        full_mb = output_full.stat().st_size / 1_000_000
+        p720_mb = output_720p.stat().st_size / 1_000_000
+        logger.info(
+            f"Encoded → {output_full.name} ({full_mb:.1f} MB)"
+            f"  +  {output_720p.name} ({p720_mb:.1f} MB)"
+        )
     finally:
         Path(concat_file).unlink(missing_ok=True)
 
@@ -111,7 +125,13 @@ async def run_stitch(data_dir: str, every_n_frames: int, output_fps: int) -> Non
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     for ch_dir in channel_dirs:
-        output = video_dir / f"timelapse_{ch_dir.name}_{timestamp}.mp4"
-        await _encode_channel(ch_dir, output, every_n_frames, output_fps)
+        stem = f"timelapse_{ch_dir.name}_{timestamp}"
+        await _encode_channel(
+            ch_dir,
+            output_full=video_dir / f"{stem}.mp4",
+            output_720p=video_dir / f"{stem}_720p.mp4",
+            every_n_frames=every_n_frames,
+            output_fps=output_fps,
+        )
 
     logger.info(f"All videos written to {video_dir}")
