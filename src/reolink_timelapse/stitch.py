@@ -5,8 +5,8 @@ Reads saved JPEG frames from <data_dir>/frames/ and encodes MP4 files into
 <data_dir>/videos/.
 
 Two files are produced per channel:
-  timelapse_<channel>_<timestamp>.mp4        — original resolution
-  timelapse_<channel>_<timestamp>_720p.mp4  — scaled to 720p (for sharing)
+  timelapse_<channel>.mp4        — original resolution
+  timelapse_<channel>_720p.mp4  — scaled to 720p (for sharing)
 
 Downsampling example
 --------------------
@@ -26,7 +26,6 @@ Output duration math
 import asyncio
 import logging
 import tempfile
-from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -123,9 +122,8 @@ async def run_stitch(data_dir: str, every_n_frames: int, output_fps: int) -> Non
         logger.error(f"No channel sub-directories found under {frames_base}")
         return
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     for ch_dir in channel_dirs:
-        stem = f"timelapse_{ch_dir.name}_{timestamp}"
+        stem = f"timelapse_{ch_dir.name}"
         await _encode_channel(
             ch_dir,
             output_full=video_dir / f"{stem}.mp4",
