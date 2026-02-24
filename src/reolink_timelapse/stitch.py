@@ -35,6 +35,21 @@ logger = logging.getLogger(__name__)
 _SCALE_720P = "scale=-2:720"
 
 
+def _date_suffix(frames: list[Path]) -> str:
+    """Return a date suffix derived from the first and last frame filenames.
+
+    Frame names are YYYYMMDD_HHMMSS_mmm.jpg.  If both dates are the same,
+    returns '_YYYY-MM-DD'; otherwise '_YYYY-MM-DD_YYYY-MM-DD'.
+    """
+    def fmt(stem: str) -> str:
+        d = stem[:8]
+        return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+
+    first = fmt(frames[0].stem)
+    last = fmt(frames[-1].stem)
+    return f"_{first}" if first == last else f"_{first}_{last}"
+
+
 async def _encode_channel(
     frame_dir: Path,
     output_full: Path,
@@ -48,6 +63,10 @@ async def _encode_channel(
         return
 
     selected = frames[::every_n_frames]
+
+    suffix = _date_suffix(selected)
+    output_full = output_full.with_stem(output_full.stem + suffix)
+    output_720p = output_720p.with_stem(output_720p.stem + suffix)
     video_s = len(selected) / output_fps
     logger.info(
         f"{frame_dir.name}: {len(frames)} frames, "
