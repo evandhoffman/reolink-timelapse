@@ -5,7 +5,7 @@ services:
     volumes:
       # Frames and videos persist on the host under ./data/
       - ./data:/data
-    restart: unless-stopped
+    restart: on-failure
     # Give the container 30 s to logout from the NVR before Docker sends SIGKILL.
     # Without this, a `docker compose down` kills the process before the logout
     # HTTP request completes, leaving a stale session on the NVR.
